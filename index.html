@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="アルバム確認">
 <title>アルバム確認</title>
-<link rel="stylesheet" href="style.css?v=2">
+<link rel="stylesheet" href="style.css?v=3">
 </head>
 <body>
 <header class="top">
@@ -19,6 +19,10 @@
 </header>
 
 <main id="main">
+  <div class="loading-card" id="loading-card">
+    <div class="spinner"></div>
+    <p><b>読み込んでいます</b><br>少し時間がかかります。<br>画面が変わるまで、このまま、しばらくお待ちください。</p>
+  </div>
   <p class="empty" id="empty" hidden></p>
   <section id="album" hidden>
     <div class="summary" id="summary"></div>
@@ -41,10 +45,14 @@
   <div class="overlay-body" id="overlay-body"></div>
   <button class="overlay-close" id="overlay-close" aria-label="閉じる">✕</button>
 </div>
-<div class="loadbar" id="loading" hidden></div>
+<div class="loadbar" id="loading" hidden>
+  <div class="spinner small"></div>
+  <div class="loadtext"><b id="loading-title">写真を読み込んでいます</b><br><span id="loading-sub">少し時間がかかります。しばらくお待ちください。</span></div>
+  <div class="loadprog"><div id="loading-bar"></div></div>
+</div>
 <div class="toast" id="toast" hidden></div>
 
 <script src="layouts.js?v=1"></script>
-<script src="app.js?v=2"></script>
+<script src="app.js?v=3"></script>
 </body>
 </html>

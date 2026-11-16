@@ -210,8 +210,15 @@
     $("btn-toggle-confirmed").textContent = showConfirmed ? "確認済みを隠す" : `確認済み ${hiddenCount}件を表示する`;
   }
 
+  function hideInitialLoading() {
+    const c = $("loading-card");
+    if (c) c.hidden = true;
+  }
+
   async function openAlbum(id) {
     curId = id;
+    $("loading-card").hidden = false;
+    $("loading-card").querySelector("b").textContent = "アルバムを読み込んでいます";
     const meta = index.albums.find((a) => a.id === id);
     renderChips();
     $("album").hidden = true;
@@ -219,12 +226,14 @@
     try {
       cur = await getJson(`data/${id}.json`, meta ? meta.updatedAt : Date.now());
     } catch (e) {
+      hideInitialLoading();
       $("empty").hidden = false;
       $("empty").textContent = "アルバムを読み込めませんでした。しばらくして、もう一度開いてください。";
       return;
     }
     libByName = new Map(cur.library.map((p) => [p.name, p]));
     chunkCache = new Map();
+    hideInitialLoading();
     $("album").hidden = false;
     $("btn-confirm").hidden = isHidden(meta || {});
     renderSummary();
@@ -253,7 +262,8 @@
     const setStatus = () => {
       const el = $("loading");
       el.hidden = done >= total;
-      el.textContent = `写真を読み込み中 ${done}/${total}`;
+      $("loading-title").textContent = `写真を読み込んでいます(${done}/${total})`;
+      $("loading-bar").style.width = (total ? (done / total) * 100 : 0) + "%";
     };
     setStatus();
     const myId = curId;
@@ -487,6 +497,7 @@
     try {
       index = await getJson("data/index.json");
     } catch (e) {
+      hideInitialLoading();
       $("empty").hidden = false;
       $("empty").textContent = "読み込めませんでした。通信の状態を確認して、開き直してください。";
       return;
@@ -499,6 +510,7 @@
     renderChips();
     const list = visibleAlbums();
     if (list.length === 0) {
+      hideInitialLoading();
       $("empty").hidden = false;
       $("empty").innerHTML = index.albums.length === 0 ? "まだ公開されているアルバムはありません。" : "すべて確認済みです。<br>新しく公開されると、ここに出ます。";
       return;

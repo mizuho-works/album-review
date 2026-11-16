@@ -87,4 +87,12 @@ main { padding: 12px 14px calc(var(--safe-bottom) + 40px); max-width: 760px; mar
 .toast { position: fixed; left: 50%; bottom: calc(var(--safe-bottom) + 24px); transform: translateX(-50%); background: rgba(30,30,30,.92); color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px; z-index: 50; max-width: 88vw; text-align: center; }
 
 .page .frame img.loading, .pthumb img.loading, .big-photo.loading { opacity: .15; }
-.loadbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: rgba(30,30,30,.85); color: #fff; font-size: 12px; text-align: center; padding: 6px; padding-bottom: calc(var(--safe-bottom) + 6px); }
+.loadbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: rgba(40,40,40,.94); color: #fff; font-size: 13px; line-height: 1.5; padding: 12px 16px calc(var(--safe-bottom) + 12px); display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: center; }
+.loadbar .loadtext { min-width: 0; }
+.loadbar .loadprog { grid-column: 1 / -1; height: 4px; background: rgba(255,255,255,.25); border-radius: 2px; overflow: hidden; }
+.loadbar .loadprog > div { height: 100%; width: 0; background: #fff; transition: width .3s; }
+.loading-card { text-align: center; padding: 56px 16px; color: var(--muted); line-height: 1.8; }
+.loading-card b { color: var(--text); font-size: 17px; }
+.spinner { width: 34px; height: 34px; margin: 0 auto 14px; border: 4px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.9s linear infinite; }
+.spinner.small { width: 22px; height: 22px; margin: 0; border-width: 3px; border-color: rgba(255,255,255,.3); border-top-color: #fff; }
+@keyframes spin { to { transform: rotate(360deg); } }
