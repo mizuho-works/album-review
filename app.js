@@ -13,8 +13,6 @@
   let tab = "pages";
   let filter = "all";
   let showConfirmed = false;
-  // 写真は、16枚ずつのファイル(チャンク)に入っている。使うときに読み込んで、使い回す。
-  let chunkCache = new Map(); // チャンク名 → { state, images, waiters }
 
   function toast(msg) {
     const t = $("toast");
@@ -96,32 +94,141 @@
     return t;
   }
   // 写真の画像を、<img> に入れる。まだ読み込んでいないチャンクなら、読み込んだあとに入れる。
-  function loadChunk(name) {
+  // ---------- 写真の読み込み ----------
+  // 写真は2段階で出す。まず「小さい版」(アルバム全体で1ファイル。すぐ出る)を出して、
+  // 「大きい版」(16枚ずつのファイル)は、あとから読み込んで入れ替える。
+  // どちらのファイルも、名前が中身で決まる(変わらない)ので、この端末の中にも残して、
+  // 2回目からは通信なしで出す。アルバムを切り替えても、読み込み済みは使い回す。
+  const CACHE_NAME = "album-review-files-v1";
+  const albumCache = new Map(); // `${id}:${updatedAt}` → アルバムのJSON
+  const smallByAlbum = new Map(); // アルバムid → { 名前: 小さい画像 }
+  let pending = []; // 大きい版が来たら入れ替える <img>
+
+  async function cacheGet(url) {
+    try {
+      const c = await caches.open(CACHE_NAME);
+      const r = await c.match(url);
+      return r ? await r.json() : null;
+    } catch (e) {
+      return null;
+    }
+  }
+  async function cachePut(url, text) {
+    try {
+      const c = await caches.open(CACHE_NAME);
+      await c.put(url, new Response(text, { headers: { "Content-Type": "application/json" } }));
+    } catch (e) {
+      /* 残せなくても使える */
+    }
+  }
+
+  // 読み込みながら、受け取ったバイト数を数える(進み具合を%で出すため)。noStore: 常に最新を取る
+  async function fetchJsonProgress(path, bust, onBytes, noStore) {
+    const r = await fetch(noStore ? path + "?t=" + bust : path, noStore ? { cache: "no-store" } : undefined);
+    if (!r.ok) throw new Error(path + " " + r.status);
+    if (!r.body || !r.body.getReader) {
+      const text = await r.text();
+      if (onBytes) onBytes(text.length);
+      return { json: JSON.parse(text), text };
+    }
+    const reader = r.body.getReader();
+    const parts = [];
+    let n = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      parts.push(value);
+      n += value.length;
+      if (onBytes) onBytes(value.length);
+    }
+    const buf = new Uint8Array(n);
+    let off = 0;
+    parts.forEach((p) => {
+      buf.set(p, off);
+      off += p.length;
+    });
+    const text = new TextDecoder().decode(buf);
+    return { json: JSON.parse(text), text };
+  }
+
+  // 変わらないファイル(名前が中身で決まる写真ファイル)。端末の中にあれば、通信しない
+  async function fetchFile(path, onBytes) {
+    const hit = await cacheGet(path);
+    if (hit) return hit;
+    const { json, text } = await fetchJsonProgress(path, "", onBytes, false);
+    cachePut(path, text);
+    return json;
+  }
+
+  // 大きい版の読み込みの進み具合(画面の下の小さな表示)
+  let prog = { totalBytes: 0, loadedBytes: 0, chunks: 0, doneChunks: 0 };
+  function updateProgress() {
+    const el = $("loading");
+    const allDone = prog.chunks > 0 && prog.doneChunks >= prog.chunks;
+    el.hidden = prog.chunks === 0 || allDone;
+    let pct;
+    if (prog.totalBytes > 0) pct = Math.min(99, Math.round((prog.loadedBytes / prog.totalBytes) * 100));
+    else pct = prog.chunks ? Math.round((prog.doneChunks / prog.chunks) * 100) : 0;
+    $("loading-title").textContent = `高画質に切り替えています  ${pct}%`;
+    $("loading-sub").textContent = `写真は、いまでも見られます。きれいな版を読み込んでいます(${prog.doneChunks}/${prog.chunks})`;
+    $("loading-bar").style.width = pct + "%";
+  }
+
+  const chunkCache = new Map(); // 大きい版のファイル名 → { images, promise }
+  function loadChunk(name, countBytes) {
     let c = chunkCache.get(name);
     if (c) return c.promise;
     c = { images: null, promise: null };
-    c.promise = getJson(`data/chunks/${name}`, name).then((j) => {
+    c.promise = fetchFile(
+      `data/chunks/${name}`,
+      countBytes
+        ? (d) => {
+            prog.loadedBytes += d;
+            updateProgress();
+          }
+        : null
+    ).then((j) => {
       c.images = j;
+      refreshPending();
       return j;
     });
     chunkCache.set(name, c);
     return c.promise;
   }
-  function setImageSrc(img, photo) {
-    if (photo.thumb) {
-      img.src = photo.thumb; // 前の形式(写真を構成の中に直接入れていた版)
-      return;
-    }
+
+  // その写真の、いま使える一番きれいな画像
+  function imageFor(photo) {
+    if (photo.thumb) return { src: photo.thumb, big: true }; // 前の形式(構成の中に直接入れていた版)
     const c = photo.chunk ? chunkCache.get(photo.chunk) : null;
-    if (c && c.images) {
-      img.src = c.images[photo.name] || "";
-      return;
-    }
-    img.classList.add("loading");
-    loadChunk(photo.chunk).then((images) => {
-      img.src = images[photo.name] || "";
+    if (c && c.images && c.images[photo.name]) return { src: c.images[photo.name], big: true };
+    const sm = smallByAlbum.get(curId);
+    if (sm && sm[photo.name]) return { src: sm[photo.name], big: false };
+    return null;
+  }
+  function setImageSrc(img, photo) {
+    const r = imageFor(photo);
+    if (r) {
+      img.src = r.src;
+      img.dataset.small = r.big ? "" : "1";
       img.classList.remove("loading");
-    }).catch(() => {});
+      if (r.big) return;
+    } else {
+      img.classList.add("loading");
+    }
+    pending.push({ img, photo });
+  }
+  function refreshPending() {
+    pending = pending.filter(({ img, photo }) => {
+      if (!img.isConnected) return false;
+      const r = imageFor(photo);
+      if (!r) return true;
+      if (r.big || !img.dataset.small) {
+        img.src = r.src;
+        img.dataset.small = r.big ? "" : "1";
+      }
+      img.classList.remove("loading");
+      return !r.big;
+    });
   }
 
   function renderPage(page) {
@@ -214,74 +321,119 @@
     const c = $("loading-card");
     if (c) c.hidden = true;
   }
+  // 画面の真ん中の読み込み表示。pct があれば、%と棒も出す
+  function showCard(title, pct) {
+    const c = $("loading-card");
+    c.hidden = false;
+    c.querySelector("b").textContent = title + (pct != null ? `  ${pct}%` : "");
+    const bar = $("card-bar");
+    bar.parentElement.hidden = pct == null;
+    bar.style.width = (pct || 0) + "%";
+  }
+
+  async function ensureAlbum(meta, withCard) {
+    const key = `${meta.id}:${meta.updatedAt}`;
+    let album = albumCache.get(key);
+    if (!album) {
+      if (withCard) showCard("アルバムを読み込んでいます");
+      album = (await fetchJsonProgress(`data/${meta.id}.json`, meta.updatedAt, null, true)).json;
+      albumCache.set(key, album);
+    }
+    if (album.small && !smallByAlbum.has(meta.id)) {
+      let loaded = 0;
+      const total = album.small.size || 0;
+      if (withCard) showCard("写真を読み込んでいます", 0);
+      const j = await fetchFile(`data/chunks/${album.small.name}`, (d) => {
+        loaded += d;
+        if (withCard && curId === meta.id && total) showCard("写真を読み込んでいます", Math.min(99, Math.round((loaded / total) * 100)));
+      });
+      smallByAlbum.set(meta.id, j);
+    }
+    return album;
+  }
 
   async function openAlbum(id) {
     curId = id;
-    $("loading-card").hidden = false;
-    $("loading-card").querySelector("b").textContent = "アルバムを読み込んでいます";
     const meta = index.albums.find((a) => a.id === id);
     renderChips();
     $("album").hidden = true;
     $("empty").hidden = true;
+    if (!meta) return;
+    let album;
     try {
-      cur = await getJson(`data/${id}.json`, meta ? meta.updatedAt : Date.now());
+      album = await ensureAlbum(meta, true);
     } catch (e) {
+      if (curId !== id) return;
       hideInitialLoading();
       $("empty").hidden = false;
       $("empty").textContent = "アルバムを読み込めませんでした。しばらくして、もう一度開いてください。";
       return;
     }
+    if (curId !== id) return; // 読み込み中に別のアルバムを選んだ
+    cur = album;
     libByName = new Map(cur.library.map((p) => [p.name, p]));
-    chunkCache = new Map();
+    pending = [];
+    prog = { totalBytes: 0, loadedBytes: 0, chunks: 0, doneChunks: 0 };
+    $("loading").hidden = true;
     hideInitialLoading();
     $("album").hidden = false;
-    $("btn-confirm").hidden = isHidden(meta || {});
+    $("btn-confirm").hidden = isHidden(meta);
     renderSummary();
     renderPages();
     renderPhotos();
     window.scrollTo(0, 0);
     preloadChunks();
+    setTimeout(prefetchOthers, 800);
   }
 
-  // 使っている写真を含むファイルから先に、順に読み込む(同時に3つまで)
+  // 使っている写真を含むファイルから先に、大きい版を順に読み込む(同時に3つまで)
   function preloadChunks() {
     const u = usageMap();
     const order = [];
     const seen = new Set();
     const add = (p) => {
-      if (p.chunk && !seen.has(p.chunk)) {
+      if (p.chunk && !seen.has(p.chunk) && !(chunkCache.get(p.chunk) && chunkCache.get(p.chunk).images)) {
         seen.add(p.chunk);
         order.push(p.chunk);
       }
     };
     cur.library.filter((p) => u.has(p.name)).forEach(add);
     cur.library.forEach(add);
-    const total = order.length;
-    let done = 0;
+    const sizes = new Map((cur.chunks || []).map((c) => [c.name, c.size]));
+    const known = order.every((n) => sizes.has(n));
+    prog = { totalBytes: known ? order.reduce((s, n) => s + sizes.get(n), 0) : 0, loadedBytes: 0, chunks: order.length, doneChunks: 0 };
+    updateProgress();
     let next = 0;
-    const setStatus = () => {
-      const el = $("loading");
-      el.hidden = done >= total;
-      $("loading-title").textContent = `写真を読み込んでいます(${done}/${total})`;
-      $("loading-bar").style.width = (total ? (done / total) * 100 : 0) + "%";
-    };
-    setStatus();
     const myId = curId;
     async function worker() {
       while (next < order.length && curId === myId) {
         const name = order[next++];
         try {
-          await loadChunk(name);
+          await loadChunk(name, true);
         } catch (e) {
           /* 読めなくても、続ける */
         }
-        done += 1;
-        setStatus();
+        if (curId === myId) {
+          prog.doneChunks += 1;
+          updateProgress();
+        }
       }
     }
     worker();
     worker();
     worker();
+  }
+
+  // ほかのアルバムも、裏で先に読み込んでおく(切り替えたときに、すぐ出るように)
+  async function prefetchOthers() {
+    for (const meta of visibleAlbums()) {
+      if (meta.id === curId) continue;
+      try {
+        await ensureAlbum(meta, false);
+      } catch (e) {
+        /* 失敗しても、切り替えたときに読み込む */
+      }
+    }
   }
 
   function usageMap() {
@@ -440,6 +592,7 @@
       const img = document.createElement("img");
       img.className = "big-photo";
       setImageSrc(img, p);
+      if (p.chunk) loadChunk(p.chunk).catch(() => {});
       body.appendChild(img);
     }
     const info = document.createElement("div");
