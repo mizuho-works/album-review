@@ -46,8 +46,6 @@ main { padding: 12px 14px calc(var(--safe-bottom) + 40px); max-width: 760px; mar
 .pair.single-solo { grid-template-columns: 1fr 1fr; }
 .pair .cell, .group-spread .cell { min-width: 0; }
 .cell .cap { font-size: 11px; color: var(--muted); text-align: center; margin-top: 3px; }
-.cell.locked .page { box-shadow: 0 0 0 2px var(--pink); }
-.cell.locked .cap::after { content: " ♡"; color: var(--pink); }
 .group-spread { background: rgba(0,0,0,.08); padding: 3px; border-radius: 4px; }
 .page { position: relative; width: 100%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.25); overflow: hidden; container-type: size; }
 .page.sq { aspect-ratio: 1 / 1; }
@@ -87,3 +85,6 @@ main { padding: 12px 14px calc(var(--safe-bottom) + 40px); max-width: 760px; mar
 .overlay-body .info a, .overlay-body .info button { color: #fff; background: rgba(255,255,255,.18); border: 0; border-radius: 12px; padding: 4px 12px; margin-right: 6px; font-size: 13px; }
 .overlay-close { position: absolute; top: calc(env(safe-area-inset-top, 0px) + 10px); right: 12px; width: 40px; height: 40px; border: 0; border-radius: 20px; background: rgba(255,255,255,.2); color: #fff; font-size: 20px; }
 .toast { position: fixed; left: 50%; bottom: calc(var(--safe-bottom) + 24px); transform: translateX(-50%); background: rgba(30,30,30,.92); color: #fff; padding: 10px 16px; border-radius: 20px; font-size: 14px; z-index: 50; max-width: 88vw; text-align: center; }
+
+.page .frame img.loading, .pthumb img.loading, .big-photo.loading { opacity: .15; }
+.loadbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; background: rgba(30,30,30,.85); color: #fff; font-size: 12px; text-align: center; padding: 6px; padding-bottom: calc(var(--safe-bottom) + 6px); }

@@ -13,6 +13,8 @@
   let tab = "pages";
   let filter = "all";
   let showConfirmed = false;
+  // 写真は、16枚ずつのファイル(チャンク)に入っている。使うときに読み込んで、使い回す。
+  let chunkCache = new Map(); // チャンク名 → { state, images, waiters }
 
   function toast(msg) {
     const t = $("toast");
@@ -93,6 +95,35 @@
     if (t === "DDth Mon. YYYY") return c.date || t;
     return t;
   }
+  // 写真の画像を、<img> に入れる。まだ読み込んでいないチャンクなら、読み込んだあとに入れる。
+  function loadChunk(name) {
+    let c = chunkCache.get(name);
+    if (c) return c.promise;
+    c = { images: null, promise: null };
+    c.promise = getJson(`data/chunks/${name}`, name).then((j) => {
+      c.images = j;
+      return j;
+    });
+    chunkCache.set(name, c);
+    return c.promise;
+  }
+  function setImageSrc(img, photo) {
+    if (photo.thumb) {
+      img.src = photo.thumb; // 前の形式(写真を構成の中に直接入れていた版)
+      return;
+    }
+    const c = photo.chunk ? chunkCache.get(photo.chunk) : null;
+    if (c && c.images) {
+      img.src = c.images[photo.name] || "";
+      return;
+    }
+    img.classList.add("loading");
+    loadChunk(photo.chunk).then((images) => {
+      img.src = images[photo.name] || "";
+      img.classList.remove("loading");
+    }).catch(() => {});
+  }
+
   function renderPage(page) {
     const el = document.createElement("div");
     el.className = "page " + (page.spread ? "sp" : "sq");
@@ -117,9 +148,9 @@
       fe.style.width = rect.w * 100 + "%";
       fe.style.height = rect.h * 100 + "%";
       const photo = f.photo ? libByName.get(f.photo) : null;
-      if (photo && photo.thumb) {
+      if (photo && (photo.chunk || photo.thumb)) {
         const img = document.createElement("img");
-        img.src = photo.thumb;
+        setImageSrc(img, photo);
         const fa = (rect.w * pageAspect) / rect.h;
         const ia = (photo.width || 3) / (photo.height || 2);
         const b = computeCoverBox(fa, ia, f.scale, f.tx, f.ty);
@@ -193,12 +224,54 @@
       return;
     }
     libByName = new Map(cur.library.map((p) => [p.name, p]));
+    chunkCache = new Map();
     $("album").hidden = false;
     $("btn-confirm").hidden = isHidden(meta || {});
     renderSummary();
     renderPages();
     renderPhotos();
     window.scrollTo(0, 0);
+    preloadChunks();
+  }
+
+  // 使っている写真を含むファイルから先に、順に読み込む(同時に3つまで)
+  function preloadChunks() {
+    const u = usageMap();
+    const order = [];
+    const seen = new Set();
+    const add = (p) => {
+      if (p.chunk && !seen.has(p.chunk)) {
+        seen.add(p.chunk);
+        order.push(p.chunk);
+      }
+    };
+    cur.library.filter((p) => u.has(p.name)).forEach(add);
+    cur.library.forEach(add);
+    const total = order.length;
+    let done = 0;
+    let next = 0;
+    const setStatus = () => {
+      const el = $("loading");
+      el.hidden = done >= total;
+      el.textContent = `写真を読み込み中 ${done}/${total}`;
+    };
+    setStatus();
+    const myId = curId;
+    async function worker() {
+      while (next < order.length && curId === myId) {
+        const name = order[next++];
+        try {
+          await loadChunk(name);
+        } catch (e) {
+          /* 読めなくても、続ける */
+        }
+        done += 1;
+        setStatus();
+      }
+    }
+    worker();
+    worker();
+    worker();
   }
 
   function usageMap() {
@@ -255,7 +328,7 @@
   function pageCell(i) {
     const p = cur.pages[i];
     const cell = document.createElement("div");
-    cell.className = "cell" + (p.locked ? " locked" : "");
+    cell.className = "cell";
     cell.id = "pg" + i;
     const pe = renderPage(p);
     pe.addEventListener("click", () => openPageOverlay(i));
@@ -291,7 +364,7 @@
     body.appendChild(renderPage(cur.pages[i]));
     const info = document.createElement("div");
     info.className = "info";
-    info.textContent = pageName(cur.pages, i) + (cur.pages[i].locked ? " ♡" : "");
+    info.textContent = pageName(cur.pages, i);
     body.appendChild(info);
     $("overlay").hidden = false;
   }
@@ -330,8 +403,15 @@
       const used = u.get(p.name);
       const th = document.createElement("button");
       th.className = "pthumb" + (used ? " used" : "");
-      th.innerHTML = `${p.thumb ? `<img src="${p.thumb}" alt="">` : ""}<span class="badge no">#${p.no}</span>` +
+      th.innerHTML = `<span class="badge no">#${p.no}</span>` +
         (p.mark ? `<span class="badge mark ${p.mark}">${p.mark === "fav" ? "お気に入り" : p.mark === "maybe" ? "迷い" : "NG"}</span>` : "");
+      if (p.chunk || p.thumb) {
+        const im = document.createElement("img");
+        im.alt = "";
+        im.decoding = "async";
+        setImageSrc(im, p);
+        th.insertBefore(im, th.firstChild);
+      }
       th.onclick = () => openPhotoOverlay(p, used);
       const cap = document.createElement("div");
       cap.className = "pcap";
@@ -346,10 +426,10 @@
   function openPhotoOverlay(p, used) {
     const body = $("overlay-body");
     body.innerHTML = "";
-    if (p.thumb) {
+    if (p.chunk || p.thumb) {
       const img = document.createElement("img");
       img.className = "big-photo";
-      img.src = p.thumb;
+      setImageSrc(img, p);
       body.appendChild(img);
     }
     const info = document.createElement("div");
